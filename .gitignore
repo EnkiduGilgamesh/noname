@@ -2,6 +2,7 @@ dist
 output
 node_modules
 package-lock.json
+.pnpm-store
 
 # IDE
 .idea/
@@ -20,3 +21,7 @@ Thumbs.db
 
 # Skill for private use
 .agents/skills/*-selfuse
+
+# 本地开发技能包（noname-general-extension：技能检索 + 知识库）
+# 技能索引为生成物，无需入库；用 scripts/build-index.mjs 重建
+.dsh/

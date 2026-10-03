@@ -1,0 +1,8 @@
+{
+	"name": "我的扩展",
+	"author": "你的名字",
+	"intro": "扩展简介。<br>支持 <b>HTML</b> 标签，可用 ${assetURL} 引用资源目录。",
+	"version": "1.0.0",
+	"diskURL": "",
+	"forumURL": ""
+}
