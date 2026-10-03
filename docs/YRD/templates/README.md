@@ -3,6 +3,11 @@
 > 一套**可直接复制使用**的《无名杀》武将扩展模板。所有代码均基于真实源码约定，非臆造。
 >
 > 适用版本：`apps/core` version 1.11.4.1（ES Module + async 引擎）
+>
+> ⚠️ **行号提示**：本库引用的源码行号以 1.11.4.1 为准。在 1.11.7 上实测
+> **183 处引用中 0 处行号越界**，仅极少数位置有轻微位移
+> （如 `import.ts` 的 `type`/`default` 校验已从 `:72-77` 移到 `:65-70`）。
+> 跳转对不上时按符号名搜索即可。
 
 ---
 
@@ -83,7 +88,7 @@ export let type = "extension";      // ← 引擎据此校验类型
 export default extensionPackage;    // ← 扩展主体
 ```
 
-来源：`apps/core/noname/init/import.ts:72-77`
+来源：`apps/core/noname/init/import.ts:65-70`
 
 ```ts
 if (!modeContent.type) return;
@@ -215,7 +220,7 @@ mypack_guanyu: { sex: "male", group: "shu", hp: 4, skills: [...] }
 mypack_guanyu: ["male", "shu", 4, ["mypack_wusheng"]]
 ```
 
-定义见 `apps/core/type.d.ts:79`，数组第 5 位由 `setPropertiesFromTrash()` 解析（`character.js:237-313`）。
+定义见 `apps/core/typings/type.d.ts:99`，数组第 5 位由 `setPropertiesFromTrash()` 解析（`character.js:237-313`）。
 
 ---
 
