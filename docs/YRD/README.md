@@ -68,7 +68,21 @@
 |---|------|-----------|
 | 14 | [14-dev-toolchain.md](14-dev-toolchain.md) | 这套工具链（Skill / 检索脚本 / 知识库）是什么？怎么用？为什么这么设计？ |
 
-> 前 13 篇讲**游戏本身的机制**，第 14 篇讲**我们为开发它而造的工具**。
+### 第 5 层 · 界面开发
+
+| # | 文档 | 回答的问题 |
+|---|------|-----------|
+| 15 | [15-ui-development.md](15-ui-development.md) | 怎么在游戏里做自定义界面？为什么我的界面不显示 / 错位 / 文字挤成一列？ |
+
+### 第 6 层 · 联机开发
+
+| # | 文档 | 回答的问题 |
+|---|------|-----------|
+| 16 | [16-online-development.md](16-online-development.md) | 联机是怎么跑起来的？大厅/房间/协议怎么工作？我要加一个联机功能该动哪里？ |
+
+> 前 13 篇讲**游戏本身的机制**，第 14 篇讲**我们为开发它而造的工具**，
+> 第 15 篇讲**界面层实践**（对话框、样式注入、排障方法），
+> 第 16 篇讲**联机层**（服务端、协议、房间生命周期、主机客机分工）。
 
 ### 附录
 
@@ -91,10 +105,13 @@
 | 内容 | 位置 |
 |------|------|
 | **工具链文档** | [14-dev-toolchain.md](14-dev-toolchain.md) |
+| **UI 开发指南** | [15-ui-development.md](15-ui-development.md) |
+| **联机开发指南** | [16-online-development.md](16-online-development.md) |
 | DSH Skill（自动加载的规范） | `.dsh/skills/noname-general-extension/SKILL.md` |
 | 工具使用说明 | `.dsh/skills/noname-general-extension/scripts/README.md` |
 | 技能检索引擎 | `scripts/skill-search.mjs`（7206 个技能） |
-| 增量知识库 | `scripts/knowledge-base.json`（13 条，带指纹校验） |
+| 增量知识库 | `scripts/knowledge-base.json`（70 条，带指纹校验） |
+| 知识库体检 | `scripts/kb-lint.mjs` |
 | 扩展注册工具 | `scripts/register-extension.mjs` |
 
 ---
@@ -110,6 +127,10 @@
 **我要迁移旧代码到 async** → [07-content-system.md](07-content-system.md) §编译链 → [appendix-c-pitfalls.md](appendix-c-pitfalls.md)
 
 **我想了解开发工具链怎么用** → [14-dev-toolchain.md](14-dev-toolchain.md) → `scripts/README.md`
+
+**我要做自定义界面 / 界面不显示或错位** → [15-ui-development.md](15-ui-development.md) §0 三条根本差异 → §2 高度与滚动
+
+**我要做联机功能 / 联机时技能没效果** → [16-online-development.md](16-online-development.md) §0 三条根本认知 → §5 动哪里 → §6 检查清单
 
 **我写完扩展但游戏里看不到** → [14-dev-toolchain.md](14-dev-toolchain.md) §6 扩展注册工具
 
@@ -165,5 +186,10 @@ apps/core/noname/library/element/gameEvent.ts:247
 | `noname/game/index.js` | 10915 | `createEvent`、`createTrigger` 等游戏级 API |
 | `noname/library/element/player.js` | — | `player.phase()`、技能收集与 `tempSkills` 过期判定 |
 | `noname/game/PauseManager.ts` | 71 | 暂停/延迟机制 |
+| `noname/library/index.js` | 15004 | `lib.message` 主客机消息表、房间初始化、`lib.node` |
+| `noname/library/element/client.js` | 104 | 房主侧的客机连接封装 |
+| `noname/library/element/nodeWS.js` | 19 | 服务器模式下代表客机的伪 socket |
+| `apps/core/mode/connect.js` | 218 | 联机模式入口（地址输入、大厅入口） |
+| `packages/server/src/server/createServer.ts` | 433 | **大厅服务器**：房间列表、约战、消息转发 |
 
 详细映射见[附录 A](appendix-a-source-map.md)。
