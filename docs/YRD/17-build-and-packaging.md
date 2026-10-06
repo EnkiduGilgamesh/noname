@@ -688,6 +688,11 @@ config: {
 
 **② `main: "app/main.js"` 靠 `extraMetadata` 注入**，而非写死在 `package.json`（那里是 `dist/app/main.js`）。因为 electron-builder 会把 `dist/` 内容**平铺**到应用根（`{ from: "dist", to: "" }`），路径要相应上移一层。
 
+> ⚠️ **该路径必须与 `vite.config.ts` 的实际产物文件名一致**。本项目已把主进程改为
+> **CJS**（`main.cjs`，原因见 §4.2.1），因此这里与 `package.json` 的 `main`
+> 都必须是 `app/main.cjs` / `dist/app/main.cjs`。
+> **写错不会报错**，只会表现为「双击 exe 毫无反应」。
+
 **③ `dist/node_modules` 被显式带上。** 本体产物可能引用运行时依赖，`to: "node_modules"` 保持 Node 解析路径有效。
 
 `build.ts:29` 在打包前先执行 `await buildVite()`，用 `vite-plugin-electron` 编译 `app/main.ts` + `app/preload.ts` 到 `dist/app/`。
@@ -701,6 +706,198 @@ config: {
 | `build:macos` | `MAC.createTarget("dmg", Arch.arm64, Arch.x64)` | `identity: null`（不签名，双架构） |
 
 > ⚠️ `main()` 是 `async` 但调用处**没有 `await`**（`build.ts:33/45/48`），进程退出依赖 electron-builder 内部句柄。本地改脚本时不要依赖 `main()` 的 Promise 时序。
+
+#### 4.2.1 ⚠️ 主进程必须产出 CJS（否则"双击 exe 毫无反应"）
+
+**症状**：双击 `noname.exe`（或 `output\win-unpacked\noname.exe`）**没有任何反应**——
+无窗口、无错误弹窗、进程秒退。命令行运行也看不到输出。
+
+**这是本项目曾经的真实缺陷**，2026-10 定位并修复。**根因有四层** ——
+前两层只在产物层面可见，**后两层才是"双击无反应"的直接原因**，
+且它是前两层的修复**引入**的（改 CJS 时踩到）。
+
+**① ESM 主进程无法 `import` electron 的命名导出**
+
+`apps/electron/package.json` 声明了 `"type": "module"`。`vite-plugin-electron` 据此
+**自动推导产物格式**：
+
+```js
+// vite-plugin-electron/dist/index.js:32,42
+const esmodule = packageJson.type === "module";
+...
+formats: esmodule ? ["es"] : ["cjs"],
+```
+
+于是主进程产物是 ESM，里面写着：
+
+```js
+import { app, crashReporter, BrowserWindow, Menu, shell, dialog } from "electron";
+```
+
+而 Electron 的 `electron` 内置模块是 **CJS 形态**，其导出名无法被 Node 的
+`cjs-module-lexer` 静态识别，启动即抛：
+
+```
+SyntaxError: The requested module 'electron' does not provide an export named 'BrowserWindow'
+```
+
+主进程在**加载第一行**就崩溃，窗口来不及创建 —— 所以「毫无反应」。
+
+**② 打包 `@electron/remote` 会破坏其内部 interop**
+
+即便格式改成 CJS，若把 `@electron/remote` 打进 bundle，Rollup 会为它多个内部模块
+**重复生成** `const electron_1 = require("electron")`，使引用落到错误作用域：
+
+```
+TypeError: Cannot read properties of undefined (reading 'on')
+    at handleRemoteCommand (...@electron/remote/.../main/server.js:313)
+```
+
+> 🔬 注意此报错出现在 **`@electron/remote` 自己的源码路径**上，
+> 容易误以为与自己的代码无关 —— 实则是打包 interop 造成的。
+
+**③ ⚠️ 改成 CJS 后 `import.meta.dirname` 失效（静默失败之一）**
+
+`main.ts:14` 原本这样取应用目录：
+
+```ts
+const dirname = path.join(import.meta.dirname, "../");
+```
+
+`import.meta` **只存在于 ESM**。一旦产物改成 CJS，打包器只能把它替换成 `void 0`：
+
+```js
+// 产物 main.cjs:8 —— 修复前（行号对应产物，非源码）
+const dirname = path.join(void 0, "../");
+```
+
+而 `path.join(undefined, "../")` **立即抛错**：
+
+```
+TypeError: The "path" argument must be of type string. Received undefined
+```
+
+**关键**：该语句位于**所有 `setPath()` 之前**（`main.ts:33-39`），
+所以 `Home/` 目录**永远不会生成**——这正是判据的由来。
+
+> 🔬 **为什么这一层最隐蔽**：
+> - 抛错发生在 `app.whenReady()` 之前，Electron **来不及**弹窗或写日志
+> - 进程秒退、**退出码 0**、无 stdout/stderr —— 完全"静默"
+> - 产物语法是合法的（`node --check` 通过），ESM 报错也确实没了
+> - **只有把 CJS 与 `import.meta` 一起看才能发现**
+
+**修复**（`apps/electron/app/main.ts:14`）：CJS 下改用 `__dirname`：
+
+```ts
+const dirname = path.join(__dirname, "../");
+```
+
+**同期发现的两处连带问题**（均已修）：
+
+| 位置 | 问题 | 修法 |
+|------|------|------|
+| `main.ts:93` | 仍指向 `app/preload.js`，而产物已是 `.cjs` | 改为 `app/preload.cjs`（指向不存在文件时 Electron **不报错**，只是 preload 静默失效） |
+| `main.ts:104` | `import.meta.env.DEV` | ✅ 无需改：`vite` 会**静态替换**为 `false`，生产分支正常保留 |
+
+**④ ⚠️ external 化会让默认导入丢失 `.default` 解包 —— 又一个静默失败**
+
+第 ③ 层修好后**仍然**"无反应"。原因是把 `@noname/fs` 标为 external 后，
+Rollup **不再插入 default 互操作包装**：
+
+```js
+// 源码 main.ts:6
+import createApp from "@noname/fs";        // 默认导入
+
+// 产物 main.cjs:6,9 —— 修复前
+const createApp = require("@noname/fs");   // ← 拿到的是命名空间对象！
+createApp({ ... });                        // ← TypeError: createApp is not a function
+```
+
+实测 `require("@noname/fs")` 返回的是 `{ default, defaultConfig }`，
+**真正的函数在 `.default` 上**（该包用 tsup 的 `__toCommonJS` 产出，
+带 `__esModule: true`）。
+
+> 🔬 **为什么同样是"静默"**：这句在第 9 行，**仍在所有 `setPath()` 之前**，
+> 所以 `Home/` 依旧不生成、依旧无任何输出。
+
+**修复**（`apps/electron/app/main.ts`）—— 显式按 default 解包，并兼容两种形态：
+
+```ts
+import createAppModule from "@noname/fs";
+// ...
+const createApp = typeof createAppModule === "function" ? createAppModule : createAppModule.default;
+```
+
+> ✅ **通用启示**：一旦把某个 **CJS 依赖**标为 `external`，
+> 凡是对它的 **`import x from "..."`（默认导入）** 都要确认 `.default` 解包。
+> `@electron/remote/main/index.js` 是 `module.exports = require(...)` 的纯 CJS 再导出，
+> **不受影响**（已验证）；而 tsup/esbuild 产物（带 `__esModule`）会受影响。
+
+**如何验证 main 能跑通（无需 GUI）**：本次用一个 stub 掉 `electron` 的模拟器
+把 `main.cjs` 完整跑了一遍，得到调用序列：
+
+```
+remote.initialize → setPath:home/appData/userData/temp/cache/crashDumps/logs
+→ crashReporter.start → setAboutPanelOptions → whenReady
+→ new BrowserWindow → loadURL(http://localhost:8089/index.html)
+→ remote.enable → setApplicationMenu → Server listening on port 8089
+```
+
+**修复**（`apps/electron/vite.config.ts`）：
+
+```ts
+build: {
+    // ① 显式覆盖 lib.formats —— 必须改 lib 而非仅 output.format，
+    //    因为 lib.formats 优先级更高，且 mergeConfig 会保留插件的 build.lib
+    lib: { entry: "app/main.ts", formats: ["cjs"], fileName: () => "main.cjs" },
+    rollupOptions: {
+        // ② 依赖保持 external，让其自身 CJS 加载
+        //    ⚠️ 必须用正则匹配子路径：main.ts 实际 import 的是
+        //       "@electron/remote/main/index.js"，
+        //       字符串 external 是精确匹配，写 "@electron/remote/main" 匹配不到
+        external: ["electron", "@noname/fs", /^node:/, /^@electron\/remote(\/|$)/],
+        output: { format: "cjs", entryFileNames: "[name].cjs" },
+    },
+}
+```
+
+并同步两处 `main` 路径：
+
+| 文件 | 字段 | 值 |
+|------|------|-----|
+| `apps/electron/package.json` | `main` | `dist/app/main.cjs` |
+| `apps/electron/build.ts` | `extraMetadata.main` | `app/main.cjs` |
+
+**修复效果**：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 产物 | `main.js`（ESM，1.64 MB） | `main.cjs`（CJS，**4.4 KB**） |
+| 首行 | `import ... from "electron"` | `"use strict"; const electron = require("electron")` |
+| `dirname` | `path.join(void 0, "../")` → **抛错** | `path.join(__dirname, "../")` ✅ |
+| 依赖 | 全部打进 bundle | external，运行时 require |
+| `Home/` | ❌ 从不生成 | ✅ 生成（即启动成功） |
+
+> ⚠️ **体积骤降不是"丢了东西"**：`main.cjs` 从 1.64 MB 降到 4.4 KB，是因为
+> `@electron/remote`、`@noname/fs` 等改为 external 后**不再内联**，改由
+> `resources/app/node_modules/` 提供（该目录由 `files` 映射带入）。
+> 若发现 `node_modules` 未随包分发，主进程会因找不到依赖而失败。
+
+**排查提示**：遇到「Electron 双击无反应」，按此顺序查：
+
+1. **看有没有 `Home/` 目录** —— 这是**最快、最可靠**的判据。
+   它由 `main.ts:39` 的 `setPath("home", ...)` 创建，位置为
+   `<应用根>/Home`（`win-unpacked` 下即 `resources\app\Home`）。
+   **没有** ⇒ `main` 根本没执行到那里，问题在入口或入口早几行
+2. 用 `cmd` 运行 exe 看 stderr（双击会吞掉输出）：
+   `cmd /c "resources\app\..\noname.exe" 2>&1`
+3. 检查 `main` 路径指向的文件**是否真的存在**（`.js` vs `.cjs` 错配最常见）
+4. **检查产物里有没有 `void 0`**：
+   ```powershell
+   Select-String -Path resources\app\app\main.cjs -Pattern 'void 0'
+   ```
+   命中 ⇒ 有 `import.meta` 被 CJS 打成 undefined（见第 ③ 层根因）
+5. 确认包内 `node_modules/@electron/remote`、`@noname/fs` 存在（external 化后必需）
 
 ### 4.3 安卓端（Capacitor）
 
