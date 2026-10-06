@@ -85,12 +85,15 @@
 | # | 文档 | 回答的问题 |
 |---|------|-----------|
 | 17 | [17-build-and-packaging.md](17-build-and-packaging.md) | `pnpm build` 做了什么？`dist/` 怎么拼出来的？**extension 部分怎么处理**？各端安装包怎么来？**沙箱/无权限/断网时怎么打包**？ |
+| 18 | [18-android-packaging.md](18-android-packaging.md) | **怎么把游戏打成 APK？** JDK/SDK 环境怎么搭？签名怎么配？为什么构建在 Java 这步就挂了？ |
 
 > 前 13 篇讲**游戏本身的机制**，第 14 篇讲**我们为开发它而造的工具**，
 > 第 15 篇讲**界面层实践**（对话框、样式注入、排障方法），
 > 第 16 篇讲**联机层**（服务端、协议、房间生命周期、主机客机分工），
 > 第 17 篇讲**构建系统**（本体/包体双路径、扩展产物链路、Electron/安卓/SEA 打包、
-> CI 产物矩阵、**受限环境与离线打包**）。
+> CI 产物矩阵、**受限环境与离线打包**），
+> 第 18 篇讲**安卓打包实战**（JDK 21 硬校验、Capacitor 同步三件事、`.pnpm` 修补、
+> 签名与 debug 回退、SAF 文件模型）。
 
 ### 附录
 
@@ -146,6 +149,8 @@
 **我要搞懂构建/打包，或扩展产物为什么会被覆盖** → [17-build-and-packaging.md](17-build-and-packaging.md) §3 → §5.3
 
 **我要打 Windows 安装包 / 打包一路报错（沙箱、无管理员、断网）** → [17-build-and-packaging.md](17-build-and-packaging.md) §10 受限环境与离线打包
+
+**我要打安卓 APK / 卡在 JDK 或 SDK** → [18-android-packaging.md](18-android-packaging.md) §1 前置环境 → §6 排错表
 
 **我只想看懂主线** → 依次读 00 → 01 → 02 → 03 → 04
 
