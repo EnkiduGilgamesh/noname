@@ -80,9 +80,17 @@
 |---|------|-----------|
 | 16 | [16-online-development.md](16-online-development.md) | 联机是怎么跑起来的？大厅/房间/协议怎么工作？我要加一个联机功能该动哪里？ |
 
+### 第 7 层 · 构建与打包
+
+| # | 文档 | 回答的问题 |
+|---|------|-----------|
+| 17 | [17-build-and-packaging.md](17-build-and-packaging.md) | `pnpm build` 做了什么？`dist/` 怎么拼出来的？**extension 部分怎么处理**？各端安装包怎么来？**沙箱/无权限/断网时怎么打包**？ |
+
 > 前 13 篇讲**游戏本身的机制**，第 14 篇讲**我们为开发它而造的工具**，
 > 第 15 篇讲**界面层实践**（对话框、样式注入、排障方法），
-> 第 16 篇讲**联机层**（服务端、协议、房间生命周期、主机客机分工）。
+> 第 16 篇讲**联机层**（服务端、协议、房间生命周期、主机客机分工），
+> 第 17 篇讲**构建系统**（本体/包体双路径、扩展产物链路、Electron/安卓/SEA 打包、
+> CI 产物矩阵、**受限环境与离线打包**）。
 
 ### 附录
 
@@ -107,6 +115,7 @@
 | **工具链文档** | [14-dev-toolchain.md](14-dev-toolchain.md) |
 | **UI 开发指南** | [15-ui-development.md](15-ui-development.md) |
 | **联机开发指南** | [16-online-development.md](16-online-development.md) |
+| **构建与打包** | [17-build-and-packaging.md](17-build-and-packaging.md) |
 | DSH Skill（自动加载的规范） | `.dsh/skills/noname-general-extension/SKILL.md` |
 | 工具使用说明 | `.dsh/skills/noname-general-extension/scripts/README.md` |
 | 技能检索引擎 | `scripts/skill-search.mjs`（7206 个技能） |
@@ -133,6 +142,10 @@
 **我要做联机功能 / 联机时技能没效果** → [16-online-development.md](16-online-development.md) §0 三条根本认知 → §5 动哪里 → §6 检查清单
 
 **我写完扩展但游戏里看不到** → [14-dev-toolchain.md](14-dev-toolchain.md) §6 扩展注册工具
+
+**我要搞懂构建/打包，或扩展产物为什么会被覆盖** → [17-build-and-packaging.md](17-build-and-packaging.md) §3 → §5.3
+
+**我要打 Windows 安装包 / 打包一路报错（沙箱、无管理员、断网）** → [17-build-and-packaging.md](17-build-and-packaging.md) §10 受限环境与离线打包
 
 **我只想看懂主线** → 依次读 00 → 01 → 02 → 03 → 04
 

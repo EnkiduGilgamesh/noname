@@ -99,6 +99,9 @@ if (!lib.node || !lib.node.clients || game.online) {
 
 ⚠️ 注意区分：`lib.node`（**房主**的客机连接集合，对象）与 `lib.configOL`（**房间配置**，主客机都有）。
 
+> ⚠️ **重要陷阱**：`lib.node` **在 Electron / 手机端客机上同样存在**（它不是"房主专属"）。
+> 见 §3.1 的说明 —— 判断房主要用 `lib.node?.clients`，不能用 `lib.node`。
+
 ### ④ 两种连接拓扑
 
 服务端 `handlers.enter` 里有一句关键代码：
@@ -125,10 +128,36 @@ if (client.owner) {
 
 | 拓扑 | 路径 | 何时使用 |
 |------|------|---------|
-| **服务器中转** | 客机 → 大厅服务器 → 房主 | 默认（`game.servermode = true`） |
-| **直连房主** | 客机 → 房主（房主自己开了 WS 服务） | 房主选"启动服务器"（`lib.node` + `window.require`，即 Electron 端） |
+| **服务器中转** | 客机 → 大厅服务器 → 房主 | 走 `packages/server` 大厅（`game.servermode = true`） |
+| **直连房主** | 客机 → 房主（房主自己开了 WS 服务） | 房主自己兼做服务器（`lib.node` + `window.require`，即 Electron 端） |
 
-房主侧的直连入口是 `connect.js` 里的「启动服务器」按钮：
+⚠️ **两条路径的端口不同**：大厅服务器默认 **8082**（`createServer.ts:41`），
+而**房主自开的**是 **8080**：
+
+```js
+// apps/core/noname/game/index.js:2422-2443
+createServer() {
+    lib.node.clients = [];
+    // ...初始化 clients/banned/observing/torespond/waitForResult...
+    lib.playerOL = {};
+    lib.cardOL = {};
+    lib.vcardOL = {};
+    lib.wsOL = {};
+    ui.create.roomInfo();
+    ui.create.chat();
+    if (game.onlineroom) {
+        void 0;                                   // ← 走大厅时不重复开端口
+    } else {
+        const WebSocketServer = require("ws").Server;
+        const wss = new WebSocketServer({ port: 8080 });   // ← 房主自开 8080
+        game.ip = get.ip();
+        wss.on("connection", lib.init.connection);
+    }
+}
+```
+
+> 💡 **`game.createServer()` 才是真正开端口的地方**。
+> 下面的「启动服务器」按钮只负责**切模式 / 提示**：
 
 ```js
 // apps/core/mode/connect.js:29-39
@@ -282,11 +311,43 @@ client.keyCheck = setTimeout(() => {
 | `game.roomId` | 房间号 | 双方都有 |
 | `game.wsid` | 我在服务器上的连接 id | 大厅阶段有 |
 | `game.ip` | 显示用的联机地址 | 双方都有 |
-| `lib.node` | **房主**的客机连接集合 | 客机 undefined |
+| `lib.node` | Node 能力对象（`fs`/`path`） | ⚠️ **Electron/手机端双方都有**；房主判别见下 |
+| `lib.node.clients` | **房主**的客机连接数组 | 只有房主有（**判断房主用它**） |
 | `lib.configOL` | 房间配置 | 双方都有 |
 | `lib.playerOL` | 客机侧 playerid → Player | 客机侧 |
 | `lib.cardOL` / `lib.vcardOL` | 客机侧卡牌映射 | 客机侧 |
 | `_status.connectMode` | **是否联机环境**（判断用这个） | 双方都 true |
+
+> ⚠️ **`lib.node` 不是"房主标志"** —— 这是 Electron 端最容易踩的坑。
+>
+> `lib.node` 由 `init/node.js` 在**任何有 `process` 的环境**下设置：
+>
+> ```js
+> // apps/core/noname/init/node.js:60-77
+> const versions = window.process.versions;
+> const electronVersion = parseFloat(versions.electron);
+> lib.node = {
+>     fs: require("fs"),
+>     path: require("path"),
+>     debug() { /* ... */ },
+> };
+> ```
+>
+> 所以 **Electron / 手机端客机上 `lib.node` 同样存在**（只是没有 `clients`）。
+>
+> 正确的房主判别是 `lib.node?.clients` —— 只有调过 `game.createServer()`
+> （`game/index.js:2423`）的房主才会建这个数组。`game.broadcast` 用的正是它：
+>
+> ```js
+> // apps/core/noname/game/index.js:1904
+> if (!lib.node || !lib.node.clients || game.online) {
+>     return;
+> }
+> ```
+>
+> 🔬 **注意 `isOnline()` 反过来依赖了 `lib.node`**（`player.js:13349-13354`），
+> 这在 Electron 下恰好成立；但在**没有 `lib.node` 的纯浏览器客机**上，
+> `isOnline()` 的判断路径不同，跨端行为需留意。
 
 ### 3.2 发送类 API
 
@@ -918,7 +979,8 @@ lib.config.reconnect_info
 **架构**
 
 - 四个角色：**大厅服务器**（纯信使）、**房主**（跑全部逻辑）、**客机**（只做交互）、**观战者**（只读）
-- 判断身份：`lib.node` 存在 = 房主；`game.online` = 我是客机；`_status.connectMode` = 联机环境
+- 判断身份：`game.online` = 我是客机；`_status.connectMode` = 联机环境；
+  房主要用 **`lib.node?.clients`** 判断（⚠️ 不能用 `lib.node`，见 §3.1）
 - 两种拓扑：**服务器中转**（默认）与**直连房主**（Electron 启动服务器）
 
 **协议**

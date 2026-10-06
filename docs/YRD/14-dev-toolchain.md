@@ -516,6 +516,11 @@ DSH 的 Skill 机制**不支持** Skill 注册工具。可行的替代是"Skill 
 | 技能编写基础 | [13-extending.md](13-extending.md) |
 | 触发机制原理 | [08-trigger-system.md](08-trigger-system.md) |
 | 易错点全清单 | [appendix-c-pitfalls.md](appendix-c-pitfalls.md) |
+| **官方构建系统与扩展产物链路** | [17-build-and-packaging.md](17-build-and-packaging.md) |
+
+> 本篇 §6 讲的「扩展注册」是**运行时登记**问题（`localStorage` 里的开启列表）；
+> 第 17 篇 §3 讲的是**构建期产物**问题（`packages/extension/` → `apps/core/extension/` → `dist/extension/`）。
+> 两者都会表现为「扩展在游戏里看不到」，但排查路径完全不同。
 
 ### 源码依据
 
