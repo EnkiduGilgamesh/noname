@@ -4,6 +4,11 @@ import fs from "fs";
 import path from "path";
 import remote from "@electron/remote/main/index.js";
 import createApp from "@noname/fs";
+
+// Work around GPU process failures observed on some Windows systems.
+app.commandLine.appendSwitch("in-process-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+
 remote.initialize();
 const dirname = path.join(import.meta.dirname, "../");
 createApp({
