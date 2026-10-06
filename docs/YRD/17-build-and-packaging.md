@@ -688,10 +688,13 @@ config: {
 
 **② `main: "app/main.js"` 靠 `extraMetadata` 注入**，而非写死在 `package.json`（那里是 `dist/app/main.js`）。因为 electron-builder 会把 `dist/` 内容**平铺**到应用根（`{ from: "dist", to: "" }`），路径要相应上移一层。
 
-> ⚠️ **该路径必须与 `vite.config.ts` 的实际产物文件名一致**。本项目已把主进程改为
-> **CJS**（`main.cjs`，原因见 §4.2.1），因此这里与 `package.json` 的 `main`
-> 都必须是 `app/main.cjs` / `dist/app/main.cjs`。
-> **写错不会报错**，只会表现为「双击 exe 毫无反应」。
+> ⚠️ **该路径必须与 `vite.config.ts` 的实际产物文件名一致**
+> （当前仓库为 `app/main.js` / `dist/app/main.js`）。
+> **写错不会报错**，只会表现为「双击 exe 毫无反应」——见 §4.2.1 排查提示第 3 条。
+>
+> ℹ️ §4.2.1 曾尝试把主进程改为 CJS（`main.cjs`）以绕过 ESM 导入问题，
+> 但**该改动已回退**，仓库当前仍是 `.js`。若将来改走 CJS 路线，
+> 这里与 `package.json` 的 `main` **都要同步改成 `.cjs`**。
 
 **③ `dist/node_modules` 被显式带上。** 本体产物可能引用运行时依赖，`to: "node_modules"` 保持 Node 解析路径有效。
 
@@ -707,14 +710,19 @@ config: {
 
 > ⚠️ `main()` 是 `async` 但调用处**没有 `await`**（`build.ts:33/45/48`），进程退出依赖 electron-builder 内部句柄。本地改脚本时不要依赖 `main()` 的 Promise 时序。
 
-#### 4.2.1 ⚠️ 主进程必须产出 CJS（否则"双击 exe 毫无反应"）
+#### 4.2.1 ⚠️ 主进程若产出 ESM，会"双击 exe 毫无反应"
+
+> **本篇目的：记录排查路径与判据，不是一份已验证的修复方案。**
+> 下面列出的四层问题都**已实测复现并确认成因**，但**对应代码改动已全部回退**——
+> 仓库当前仍是原始 ESM 产物（`dist/app/main.js`），
+> 仅额外加了 §4.2.2 的两个 GPU 开关。
+> 因此**不要照抄本节代码**，请把它当作"若将来要修，会踩到哪些坑"的线索。
 
 **症状**：双击 `noname.exe`（或 `output\win-unpacked\noname.exe`）**没有任何反应**——
 无窗口、无错误弹窗、进程秒退。命令行运行也看不到输出。
 
-**这是本项目曾经的真实缺陷**，2026-10 定位并修复。**根因有四层** ——
-前两层只在产物层面可见，**后两层才是"双击无反应"的直接原因**，
-且它是前两层的修复**引入**的（改 CJS 时踩到）。
+**四层问题**，前两层在原始代码里就存在；后两层是把产物改成 CJS 时**新引入**的。
+四者的**共同症状完全一样**（静默退出、无任何日志），因此极易被误判为"同一个问题没修好"。
 
 **① ESM 主进程无法 `import` electron 的命名导出**
 
@@ -741,11 +749,14 @@ import { app, crashReporter, BrowserWindow, Menu, shell, dialog } from "electron
 SyntaxError: The requested module 'electron' does not provide an export named 'BrowserWindow'
 ```
 
-主进程在**加载第一行**就崩溃，窗口来不及创建 —— 所以「毫无反应」。
+主进程在**加载第一行**就崩溃，窗口来不及创建。
+
+> ⚠️ **注意**：当前仓库状态**正是这一层**（未修）。若要验证，直接跑
+> `apps\electron\node_modules\electron\dist\electron.exe .` 即可复现此报错。
 
 **② 打包 `@electron/remote` 会破坏其内部 interop**
 
-即便格式改成 CJS，若把 `@electron/remote` 打进 bundle，Rollup 会为它多个内部模块
+即便把格式改成 CJS，若仍把 `@electron/remote` 打进 bundle，Rollup 会为它多个内部模块
 **重复生成** `const electron_1 = require("electron")`，使引用落到错误作用域：
 
 ```
@@ -756,9 +767,11 @@ TypeError: Cannot read properties of undefined (reading 'on')
 > 🔬 注意此报错出现在 **`@electron/remote` 自己的源码路径**上，
 > 容易误以为与自己的代码无关 —— 实则是打包 interop 造成的。
 
-**③ ⚠️ 改成 CJS 后 `import.meta.dirname` 失效（静默失败之一）**
+**这一层只在第 ① 层被修掉之后才会暴露**，是典型的"修一层、冒一层"。
 
-`main.ts:14` 原本这样取应用目录：
+**③ 改成 CJS 后 `import.meta.dirname` 失效**
+
+`main.ts:13` 这样取应用目录：
 
 ```ts
 const dirname = path.join(import.meta.dirname, "../");
@@ -767,7 +780,7 @@ const dirname = path.join(import.meta.dirname, "../");
 `import.meta` **只存在于 ESM**。一旦产物改成 CJS，打包器只能把它替换成 `void 0`：
 
 ```js
-// 产物 main.cjs:8 —— 修复前（行号对应产物，非源码）
+// CJS 产物中该行的实际形态
 const dirname = path.join(void 0, "../");
 ```
 
@@ -777,29 +790,18 @@ const dirname = path.join(void 0, "../");
 TypeError: The "path" argument must be of type string. Received undefined
 ```
 
-**关键**：该语句位于**所有 `setPath()` 之前**（`main.ts:33-39`），
-所以 `Home/` 目录**永远不会生成**——这正是判据的由来。
+**关键**：该语句位于**所有 `setPath()` 之前**，所以 `Home/` 目录**永远不会生成**
+——这正是下文判据的由来。
 
 > 🔬 **为什么这一层最隐蔽**：
 > - 抛错发生在 `app.whenReady()` 之前，Electron **来不及**弹窗或写日志
 > - 进程秒退、**退出码 0**、无 stdout/stderr —— 完全"静默"
-> - 产物语法是合法的（`node --check` 通过），ESM 报错也确实没了
-> - **只有把 CJS 与 `import.meta` 一起看才能发现**
+> - 产物语法是合法的（`node --check` 通过），第 ① 层的 ESM 报错也确实消失了
+> - **只有把 CJS 与 `import.meta` 放在一起看才能发现**
+>
+> 若走 CJS 路线，此处应改用 `__dirname`。
 
-**修复**（`apps/electron/app/main.ts:14`）：CJS 下改用 `__dirname`：
-
-```ts
-const dirname = path.join(__dirname, "../");
-```
-
-**同期发现的两处连带问题**（均已修）：
-
-| 位置 | 问题 | 修法 |
-|------|------|------|
-| `main.ts:93` | 仍指向 `app/preload.js`，而产物已是 `.cjs` | 改为 `app/preload.cjs`（指向不存在文件时 Electron **不报错**，只是 preload 静默失效） |
-| `main.ts:104` | `import.meta.env.DEV` | ✅ 无需改：`vite` 会**静态替换**为 `false`，生产分支正常保留 |
-
-**④ ⚠️ external 化会让默认导入丢失 `.default` 解包 —— 又一个静默失败**
+**④ external 化会让默认导入丢失 `.default` 解包**
 
 第 ③ 层修好后**仍然**"无反应"。原因是把 `@noname/fs` 标为 external 后，
 Rollup **不再插入 default 互操作包装**：
@@ -808,7 +810,7 @@ Rollup **不再插入 default 互操作包装**：
 // 源码 main.ts:6
 import createApp from "@noname/fs";        // 默认导入
 
-// 产物 main.cjs:6,9 —— 修复前
+// CJS 产物中变成
 const createApp = require("@noname/fs");   // ← 拿到的是命名空间对象！
 createApp({ ... });                        // ← TypeError: createApp is not a function
 ```
@@ -817,35 +819,18 @@ createApp({ ... });                        // ← TypeError: createApp is not a 
 **真正的函数在 `.default` 上**（该包用 tsup 的 `__toCommonJS` 产出，
 带 `__esModule: true`）。
 
-> 🔬 **为什么同样是"静默"**：这句在第 9 行，**仍在所有 `setPath()` 之前**，
+> 🔬 **为什么同样是"静默"**：这句仍在所有 `setPath()` 之前，
 > 所以 `Home/` 依旧不生成、依旧无任何输出。
-
-**修复**（`apps/electron/app/main.ts`）—— 显式按 default 解包，并兼容两种形态：
-
-```ts
-import createAppModule from "@noname/fs";
-// ...
-const createApp = typeof createAppModule === "function" ? createAppModule : createAppModule.default;
-```
 
 > ✅ **通用启示**：一旦把某个 **CJS 依赖**标为 `external`，
 > 凡是对它的 **`import x from "..."`（默认导入）** 都要确认 `.default` 解包。
 > `@electron/remote/main/index.js` 是 `module.exports = require(...)` 的纯 CJS 再导出，
 > **不受影响**（已验证）；而 tsup/esbuild 产物（带 `__esModule`）会受影响。
 
-**如何验证 main 能跑通（无需 GUI）**：本次用一个 stub 掉 `electron` 的模拟器
-把 `main.cjs` 完整跑了一遍，得到调用序列：
-
-```
-remote.initialize → setPath:home/appData/userData/temp/cache/crashDumps/logs
-→ crashReporter.start → setAboutPanelOptions → whenReady
-→ new BrowserWindow → loadURL(http://localhost:8089/index.html)
-→ remote.enable → setApplicationMenu → Server listening on port 8089
-```
-
-**修复**（`apps/electron/vite.config.ts`）：
+**若走 CJS 路线，需要同步的改动点**（供参考，当前未采用）：
 
 ```ts
+// vite.config.ts
 build: {
     // ① 显式覆盖 lib.formats —— 必须改 lib 而非仅 output.format，
     //    因为 lib.formats 优先级更高，且 mergeConfig 会保留插件的 build.lib
@@ -868,36 +853,167 @@ build: {
 | `apps/electron/package.json` | `main` | `dist/app/main.cjs` |
 | `apps/electron/build.ts` | `extraMetadata.main` | `app/main.cjs` |
 
-**修复效果**：
-
-| | 修复前 | 修复后 |
-|---|---|---|
-| 产物 | `main.js`（ESM，1.64 MB） | `main.cjs`（CJS，**4.4 KB**） |
-| 首行 | `import ... from "electron"` | `"use strict"; const electron = require("electron")` |
-| `dirname` | `path.join(void 0, "../")` → **抛错** | `path.join(__dirname, "../")` ✅ |
-| 依赖 | 全部打进 bundle | external，运行时 require |
-| `Home/` | ❌ 从不生成 | ✅ 生成（即启动成功） |
-
-> ⚠️ **体积骤降不是"丢了东西"**：`main.cjs` 从 1.64 MB 降到 4.4 KB，是因为
-> `@electron/remote`、`@noname/fs` 等改为 external 后**不再内联**，改由
-> `resources/app/node_modules/` 提供（该目录由 `files` 映射带入）。
-> 若发现 `node_modules` 未随包分发，主进程会因找不到依赖而失败。
+> ⚠️ **不要把这段当成"正确配置"**：它只是当时尝试过的形态，**未能让程序真正跑起来**
+> （见 §4.2.2 与下文"未解之谜"）。当前仓库**没有**采用它。
 
 **排查提示**：遇到「Electron 双击无反应」，按此顺序查：
 
 1. **看有没有 `Home/` 目录** —— 这是**最快、最可靠**的判据。
-   它由 `main.ts:39` 的 `setPath("home", ...)` 创建，位置为
-   `<应用根>/Home`（`win-unpacked` 下即 `resources\app\Home`）。
+   它由 `setPath("home", ...)` 创建，位置为 `<应用根>/Home`
+   （`win-unpacked` 下即 `resources\app\Home`）。
    **没有** ⇒ `main` 根本没执行到那里，问题在入口或入口早几行
-2. 用 `cmd` 运行 exe 看 stderr（双击会吞掉输出）：
-   `cmd /c "resources\app\..\noname.exe" 2>&1`
+2. **用 `--enable-logging` 跑**，让渲染进程日志也进终端（否则只能看到主进程的
+   `Server listening ...`，网页侧报错一条都看不到）：
+   ```powershell
+   .\noname.exe --enable-logging 2>&1 | Tee-Object run.log
+   ```
 3. 检查 `main` 路径指向的文件**是否真的存在**（`.js` vs `.cjs` 错配最常见）
 4. **检查产物里有没有 `void 0`**：
    ```powershell
-   Select-String -Path resources\app\app\main.cjs -Pattern 'void 0'
+   Select-String -Path resources\app\app\main.js -Pattern 'void 0'
    ```
-   命中 ⇒ 有 `import.meta` 被 CJS 打成 undefined（见第 ③ 层根因）
+   命中 ⇒ 有 `import.meta` 被打包器打成了 undefined（见第 ③ 层）
 5. 确认包内 `node_modules/@electron/remote`、`@noname/fs` 存在（external 化后必需）
+
+> 🔬 **顺带一条通用教训**：`win.webContents` 的日志监听器（`console-message`、
+> `did-finish-load`、`did-fail-load`）**必须在 `loadURL()` 之前注册**。
+> 本次曾把 `loadURL` 写在前面、监听器写在后面，结果页面加载期间的日志
+> **一条都没捕获到**，白白多绕了一轮。
+
+
+#### 4.2.2 Windows GPU 子进程失败与白屏（2026-10 实测）
+
+Windows 11 / NVIDIA GeForce RTX 4060 Ti 上曾遇到 Electron 窗口闪退或白屏。命令行日志出现：
+
+```text
+GPU process launch failed: error_code=18
+FATAL: GPU process isn't usable. Goodbye.
+```
+
+排查时，Electron 会启动本地服务（日志出现 `Server listening on port 8089`），
+`netstat` 也确认端口属 noname 自己、且渲染进程有 7 条 `ESTABLISHED` 连接 ——
+**说明服务与连接都正常**，问题不在"服务没起来"。
+
+> ⚠️ 但**不能**据此说"页面本身没问题"：当时用浏览器打开
+> `http://localhost:8089/index.html` 同样是空白，直到手动写入
+> `localStorage.setItem("gplv3_noname_alerted","true")` 后才正常。
+> 那是**配置差异**（浏览器的 localStorage 已有内容，Electron 的 `Home/` 是空的），
+> 与 GPU 无关。详见 §4.2.3。
+
+**实测开关结果**：
+
+| 启动参数 | 观察结果 |
+|------|------|
+| （无参数） | GPU 子进程反复报错，随后 `FATAL: GPU process isn't usable. Goodbye.`，进程退出 |
+| `--disable-gpu` | **无效** —— GPU 子进程仍报错。Chromium 142 已不再据此阻止 GPU 进程创建 |
+| `--use-angle=swiftshader` | GPU 子进程仍报错 |
+| `--in-process-gpu` | **窗口出现**（有窗口、有标题栏），但内容区停在启动页渐变 |
+| `--disable-gpu-sandbox` | **窗口出现**，同样无内容 |
+
+> ⚠️ **两点要如实说明**：
+> 1. 上表中"窗口出现"的三个开关，**都只是让窗口开出来**，内容区始终没有渲染出游戏界面
+>    （原因见 §4.2.3）。因此**不能把 `--in-process-gpu` 当作"已解决"**。
+> 2. 用管理员权限运行时窗口才能出现 —— 这一点尚未查清（可能与 `--in-process-gpu`
+>    让 GPU 在主进程内运行的权限需求有关）。
+
+当前 Electron 主进程在启动早期固定追加以下 Chromium 开关（**这是用户本地未提交的改动**，
+用于绕过上述 GPU 崩溃）：
+
+```ts
+// apps/electron/app/main.ts:8-10
+// Work around GPU process failures observed on some Windows systems.
+app.commandLine.appendSwitch("in-process-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+```
+
+位置：`apps/electron/app/main.ts`，必须在 `app.whenReady()` 和创建窗口之前设置。
+它们由程序自动传入，无需用户再在命令行重复添加。禁用 GPU 合成可能增加 CPU 使用或降低图形性能；
+若要恢复默认渲染路径，可移除这三行（含注释）并重新打包。
+
+**重新生成 Windows 包并核验**：
+
+```powershell
+pnpm -F @noname/electron build:win
+Select-String -Path output\win-unpacked\resources\app\app\main.js `
+  -Pattern 'in-process-gpu|disable-gpu-compositing'
+```
+
+`build:win` 会先构建 Electron 主进程和预加载脚本，再运行 electron-builder；根 `dist/` 应已由
+`pnpm build` 生成。2026-10 本次重打包成功，且在 `resources/app/app/main.js` 中确认两个开关均已编入。
+**打包成功和产物包含开关不等于已在所有 Windows 显卡上完成运行验证**；更新驱动、系统或 Electron 版本后应重新实测。
+
+#### 4.2.3 ⚠️ 未解决：窗口有内容区但停在启动页
+
+这是上面一系列排查**最终没有解决**的问题，如实记录以备后续接手。
+
+**现象**：按 §4.2.2 加上 GPU 开关后，窗口能正常出现、标题栏与菜单均正常，
+但内容区只显示一张**浅色渐变背景**（中央有隐约的圆形 logo）。窗口可见但"没有游戏界面"。
+
+**已排除的方向**（每条都有实测依据，不必重复排查）：
+
+| 方向 | 排除依据 |
+|------|---------|
+| 8089 本地服务没起来 | `netstat` 显示端口属 noname 自己，且有 7 条 `ESTABLISHED` 连接 |
+| 路径/资源缺失 | **部分排除**：浏览器打开 `http://localhost:8089/index.html` 能取到页面（`index.js` 执行到 `boot()`），但那台机器**最初也是空白**，写入 localStorage 后才正常 —— 所以"浏览器正常"本身不构成 Electron 侧正常的证据 |
+| 主进程崩溃 | 窗口标题栏、菜单都能用；日志有 `Server listening on port 8089` |
+| GPLv3 弹窗拦截 | 见下：确曾发生，已绕过（`boot()` 已在执行） |
+| 页面没加载 | 控制台有 `boot @ index.js:323`、`entry.js:49` —— `boot()` 确实在跑 |
+
+**曾真实踩到、且已确认成因的两点**（都不是最终原因，但会伪装成"无反应"）：
+
+**① Chromium 抑制 `confirm()` 导致 GPLv3 协议被判为"拒绝"**
+
+`noname/entry.js:36-47`：
+
+```js
+if (!localStorage.getItem("gplv3_noname_alerted")) {
+    if (confirm("①无名杀是一款基于GPLv3协议的开源软件…")) {
+        localStorage.setItem("gplv3_noname_alerted", "true");
+    } else {
+        game.exit();   // window.close() 后 return，永不执行 boot()
+        return;
+    }
+}
+await boot();
+```
+
+而 Chromium 会抑制**非用户交互触发**的 `confirm()`，控制台提示：
+
+```
+A window.confirm() dialog generated by this page was suppressed because
+this page is not the active tab
+```
+
+被抑制时 `confirm` 返回 **`false`** → 判定"用户拒绝" → `game.exit()`
+→ `browser.js:32-35` 的 `window.close()` 对**非脚本打开**的窗口无效
+（`Scripts may close only the windows that were opened by them.`）
+→ 窗口留着、`boot()` 从未执行。
+
+**处置**：让该标记提前存在即可（写入一次即长期有效）。
+
+**② 首次运行没有配置，停在启动页**
+
+`noname/init/index.js:430`：`if (!lib.imported.mode?.[lib.config.mode])` 时显示启动页，
+等用户选模式。而启动页的模式格子由 `OnloadSplash.vue2.js:47` 遍历
+`lib.config.all.mode` 渲染 —— **首次运行时该集合为空**，于是只剩背景、
+看不到任何可点的格子，很容易被误认为"空白 / 程序没启动"。
+
+**可尝试的方向**（本次未验证有效）：
+
+```js
+// 在页面加载前预置，让 init/index.js:299 走"跳过启动页"分支
+localStorage.setItem("gplv3_noname_alerted", "true");
+localStorage.setItem("noname_0.9_directstart", "true");
+```
+
+> ⚠️ `noname_0.9_` 前缀来自 `lib.configprefix`，若上游改过该前缀需同步调整。
+
+**关键教训（本次最大失误）**：
+
+排查期间看到"浏览器能跑、Electron 不能"，容易下意识断定"Electron 渲染层坏了"。
+但**两者用的 localStorage 不同**：浏览器里已经选过模式、写过 GPLv3 标记，
+Electron 的 `userData` 被 `main.ts` 重定向到 `Home/` 下，是**全新的空配置**。
+**很多"环境差异"其实是配置差异**，排查时应先对齐两边的持久化状态。
 
 ### 4.3 安卓端（Capacitor）
 
@@ -1254,6 +1370,9 @@ $h1 -eq $h2    # → True
 >
 > ✅ **本节结论已实机验证**（2026-10，Windows · Node 24.21.0 · pnpm 12.8.1 · Electron 39.5.2 · electron-builder 26.7.0），
 > 最终产出 **1.62 GB** 的 `noname Setup 1.11.7.exe`。
+>
+> ⚠️ **但"打包成功" ≠ "能玩"**：该安装包**装完双击仍看不到游戏内容**（见 §4.2.3）。
+> 本节解决的只是**打包链路**的阻塞，运行期问题不在本节范围内。
 
 ### 10.1 先给结论：能开权限就别硬扛
 
@@ -1551,3 +1670,5 @@ Get-ChildItem "$root\output\win-unpacked\resources\app"   # 应含 game/ image/ 
   `ELECTRON_BUILDER_BINARIES_DOWNLOAD_OVERRIDE_URL` + 本地镜像。
 - ⚠️ **退出码 0 不代表包是对的**：`files` 被绕过会产出 ~100 MB 的空壳包。
   **必须检查 `resources/app` 是否含游戏本体**。
+- ⚠️ **但"包是对的"也不代表"能玩"**：本节只覆盖打包链路。
+  安装后双击无内容属于运行期问题，见 §4.2.3。
