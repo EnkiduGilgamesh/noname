@@ -914,8 +914,8 @@ FATAL: GPU process isn't usable. Goodbye.
 > （可能与 `--in-process-gpu` 让 GPU 在主进程内运行的权限需求有关）。
 > **分发安装包时这一点会直接影响用户体验**（见 §10.7 自测清单）。
 
-当前 Electron 主进程在启动早期固定追加以下 Chromium 开关
-（**这是用户本地未提交的改动**，用于绕过上述 GPU 崩溃）：
+当前 Electron 主进程在启动早期固定追加以下 Chromium 开关（已提交入库，
+用于绕过上述 GPU 崩溃）：
 
 ```ts
 // apps/electron/app/main.ts:8-10
