@@ -289,7 +289,9 @@
 	],
 	"plays": [],
 	"extensions": [
-		"新宇杀"
+		"新宇杀",
+		"英雄杀RE",
+		"新宇杀-武将平衡"
 	],
 	"banned": [],
 	"bannedcards": [],
@@ -570,5 +572,7 @@
 			"cxliushi"
 		]
 	],
-	"extension_新宇杀_enable": true
+	"extension_新宇杀_enable": true,
+	"extension_英雄杀RE_enable": true,
+	"extension_新宇杀-武将平衡_enable": true
 }
